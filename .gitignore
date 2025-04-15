@@ -1,0 +1,46 @@
+# Compiled Object files
+*.o
+*.obj
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+ptsm_omp
+gen_matrix
+
+# Generated test files
+cities*.txt
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Build directories
+build/
+bin/
+Debug/
+Release/
+
+# Dependency directories
+lib/
+libs/
+
+# Backup files
+*~
+*.bak
+
+# Core dumps
+core
+*.core 
