@@ -2,15 +2,14 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <string.h>
+#include <omp.h>
 #include <time.h>
 
-static int **distMatrix;
-static int  numCities;
-static int  bestDistance = INT_MAX;
-static int *bestPath;
+static int **dist;        // distance matrix
+static int  numCities;    // number of cities
 
-// allocate an NxN matrix
-static int **allocateMatrix(int N) {
+// allocate an N×N integer matrix
+static int **allocMatrix(int N) {
     int **m = malloc(N * sizeof(int *));
     for (int i = 0; i < N; i++) {
         m[i] = malloc(N * sizeof(int));
@@ -18,30 +17,31 @@ static int **allocateMatrix(int N) {
     return m;
 }
 
-// read the distance matrix from a file
-static void readMatrix(const char *fname) {
+// load the matrix from a text file
+static void loadMatrix(const char *fname) {
     FILE *f = fopen(fname, "r");
     if (!f) {
-        perror("Failed to open matrix file");
-        exit(EXIT_FAILURE);
+        perror("cannot open matrix file");
+        exit(1);
     }
-    distMatrix = allocateMatrix(numCities);
+    dist = allocMatrix(numCities);
     for (int i = 0; i < numCities; i++) {
         for (int j = 0; j < numCities; j++) {
-            if (fscanf(f, "%d", &distMatrix[i][j]) != 1) {
-                fprintf(stderr, "Error reading [%d][%d]\n", i, j);
-                exit(EXIT_FAILURE);
+            if (fscanf(f, "%d", &dist[i][j]) != 1) {
+                fprintf(stderr, "bad data at %d,%d\n", i, j);
+                exit(1);
             }
         }
     }
     fclose(f);
 }
 
-// backtracking DFS to explore all tours
-static void tsp(int city, int visited[], int path[], int depth, int cost) {
+// recursive backtracking
+static void dfs(int city, int visited[], int path[], int depth,
+                int cost, int *bestCost, int bestPath[]) {
     if (depth == numCities) {
-        if (cost < bestDistance) {
-            bestDistance = cost;
+        if (cost < *bestCost) {
+            *bestCost = cost;
             memcpy(bestPath, path, numCities * sizeof(int));
         }
         return;
@@ -49,8 +49,9 @@ static void tsp(int city, int visited[], int path[], int depth, int cost) {
     for (int nxt = 0; nxt < numCities; nxt++) {
         if (!visited[nxt]) {
             visited[nxt] = 1;
-            path[depth]   = nxt;
-            tsp(nxt, visited, path, depth + 1, cost + distMatrix[city][nxt]);
+            path[depth]  = nxt;
+            dfs(nxt, visited, path, depth + 1,
+                cost + dist[city][nxt], bestCost, bestPath);
             visited[nxt] = 0;
         }
     }
@@ -58,45 +59,73 @@ static void tsp(int city, int visited[], int path[], int depth, int cost) {
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
-        fprintf(stderr, "Usage: %s <numCities> <numThreads> <matrixFile>\n", argv[0]);
-        return EXIT_FAILURE;
+        fprintf(stderr, "Usage: %s <cities> <threads> <matrix.txt>\n", argv[0]);
+        return 1;
     }
     numCities = atoi(argv[1]);
-    // int numThreads = atoi(argv[2]);  // unused in this sequential version
-    const char *matrixFile = argv[3];
+    int numThreads = atoi(argv[2]);
+    const char *file = argv[3];
 
-    readMatrix(matrixFile);
+    loadMatrix(file);
 
-    int *visited = calloc(numCities, sizeof(int));
-    int *path    = malloc(numCities * sizeof(int));
-    bestPath     = malloc(numCities * sizeof(int));
-
-    visited[0] = 1;
-    path[0]    = 0;
+    int globalBest = INT_MAX;
+    int *globalPath = malloc(numCities * sizeof(int));
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    tsp(0, visited, path, 1, 0);
+    omp_set_num_threads(numThreads);
+    #pragma omp parallel
+    {
+        int tid = omp_get_thread_num();
+        int slice = (numCities - 1 + numThreads - 1) / numThreads;
+        int lo = 1 + tid * slice;
+        int hi = lo + slice;
+        if (hi > numCities) hi = numCities;
+
+        int localBest = INT_MAX;
+        int localPath[numCities];
+
+        for (int first = lo; first < hi; first++) {
+            int visited[numCities];
+            int path[numCities];
+
+            memset(visited, 0, sizeof(visited));
+            visited[0] = 1;
+            visited[first] = 1;
+
+            path[0] = 0;
+            path[1] = first;
+
+            dfs(first, visited, path, 2, dist[0][first],
+                &localBest, localPath);
+        }
+
+        #pragma omp critical
+        {
+            if (localBest < globalBest) {
+                globalBest = localBest;
+                memcpy(globalPath, localPath, numCities * sizeof(int));
+            }
+        }
+    }
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double elapsed = (t1.tv_sec  - t0.tv_sec)
-                   + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+                   + (t1.tv_nsec - t0.tv_nsec)/1e9;
 
+    // output
     printf("Best path: ");
     for (int i = 0; i < numCities; i++) {
-        printf("%d ", bestPath[i]);
+        printf("%d ", globalPath[i]);
     }
-    printf("\nDistance: %d\n", bestDistance);
-    printf("Elapsed time: %.6f seconds\n", elapsed);
+    printf("\nDistance: %d\n", globalBest);
+    printf("Elapsed time: %.6f s\n", elapsed);
 
-    for (int i = 0; i < numCities; i++) {
-        free(distMatrix[i]);
-    }
-    free(distMatrix);
-    free(visited);
-    free(path);
-    free(bestPath);
+    // cleanup
+    for (int i = 0; i < numCities; i++) free(dist[i]);
+    free(dist);
+    free(globalPath);
 
-    return EXIT_SUCCESS;
+    return 0;
 }
