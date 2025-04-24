@@ -22,12 +22,7 @@ The program:
 
 ## Compilation (on NYU CIMS "crunchy")
 
-1. Load GCC 9.2 or higher:
-```bash
-module load gcc-9.2
-```
-
-2. Compile:
+1. Compile:
 ```bash
 gcc -O2 -fopenmp -o ptsm ptsm.c
 ```
